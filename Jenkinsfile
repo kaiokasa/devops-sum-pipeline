@@ -2,22 +2,18 @@ pipeline {
     agent any
 
     environment {
-        // Required by the assignment
         CONTAINER_ID = ""
 
-        // Jenkins workspace paths
-        SUM_PY_PATH = "${WORKSPACE}\\sum.py"
-        DIR_PATH = "${WORKSPACE}"
-        TEST_FILE_PATH = "${WORKSPACE}\\test_variables.txt"
+        SUM_PY_PATH = "C:\\Users\\hamoud\\Documents\\dev_fp\\sum.py"
+        DIR_PATH = "C:\\Users\\hamoud\\Documents\\dev_fp"
+        TEST_FILE_PATH = "C:\\Users\\hamoud\\Documents\\dev_fp\\test_variables.txt"
 
-        // Docker settings
         IMAGE_NAME = "sum-app"
         CONTAINER_NAME = "sum-container"
-        DOCKERHUB_REPO = "bouchentoufomar/sum-app:latest"
+        DOCKERHUB_IMAGE = "bouchentoufomar/sum-app:latest"
     }
 
     stages {
-
         stage('Build') {
             steps {
                 dir("${DIR_PATH}") {
@@ -29,20 +25,15 @@ pipeline {
         stage('Run') {
             steps {
                 script {
-                    // Remove old container if it exists
+                    // clean up any old container
                     bat "docker rm -f %CONTAINER_NAME% || exit 0"
 
-                    // Run container in background
-                    bat "docker run -d --name %CONTAINER_NAME% %IMAGE_NAME%"
+                    // PDF-recommended way: capture stdout, split lines, take last line as ID
+                    def output = bat(script: "docker run -d --name %CONTAINER_NAME% %IMAGE_NAME%", returnStdout: true)
+                    def lines = output.split("\\r?\\n")
+                    CONTAINER_ID = lines[-1].trim()
 
-                    // Store container ID (not strictly needed, but required by assignment)
-                    def idOut = bat(
-                        script: "docker ps -q -f name=%CONTAINER_NAME%",
-                        returnStdout: true
-                    ).trim()
-
-                    env.CONTAINER_ID = idOut
-                    echo "Container started: name=%CONTAINER_NAME%, id=${env.CONTAINER_ID}"
+                    echo "Container started: name=%CONTAINER_NAME%, id=${CONTAINER_ID}"
                 }
             }
         }
@@ -50,43 +41,36 @@ pipeline {
         stage('Test') {
             steps {
                 script {
-                    // Read test file
-                    def lines = readFile("${TEST_FILE_PATH}").trim().split("\\r?\\n")
+                    def testLines = readFile("${TEST_FILE_PATH}").trim().split("\\r?\\n")
 
-                    for (def line : lines) {
+                    for (def line : testLines) {
                         line = line.trim()
                         if (line == "") continue
 
-                        def parts = line.split("\\s+")
-                        def a = parts[0]
-                        def b = parts[1]
-                        def expected = Double.parseDouble(parts[2])
+                        def vars = line.split("\\s+")
+                        def arg1 = vars[0]
+                        def arg2 = vars[1]
+                        def expected = vars[2]
 
-                        // Run Python script inside container
-                        def raw = bat(
-                            script: "docker exec %CONTAINER_NAME% python /app/sum.py ${a} ${b}",
+                        // Run sum.py in the container
+                        def output = bat(
+                            script: "docker exec %CONTAINER_NAME% python /app/sum.py ${arg1} ${arg2}",
+                            returnStdout: true
+                        )
+                        def outLines = output.split("\\r?\\n")
+                        def result = outLines[-1].trim()
+
+                        // Normalize comparison using Python (avoids Groovy float parsing + formatting issues)
+                        def norm = bat(
+                            script: """docker exec %CONTAINER_NAME% python -c "from decimal import Decimal; \
+print(Decimal('${result}') == Decimal('${expected}'))" """,
                             returnStdout: true
                         ).trim()
 
-                        // Extract last non-empty line (sandbox-safe)
-                        def outLines = raw.split("\\r?\\n")
-                        def lastNonEmpty = ""
-                        for (int i = 0; i < outLines.length; i++) {
-                            def t = outLines[i].trim()
-                            if (t != "") {
-                                lastNonEmpty = t
-                            }
-                        }
-
-                        double result = Double.parseDouble(lastNonEmpty)
-
-                        // Floating-point tolerance
-                        double eps = 1e-6
-
-                        if (Math.abs(result - expected) < eps) {
-                            echo "✅ SUCCESS: ${a} + ${b} = ${result} (expected ${expected})"
+                        if (norm.endsWith("True")) {
+                            echo "✅ SUCCESS: ${arg1} + ${arg2} = ${result} (expected ${expected})"
                         } else {
-                            error "❌ ERROR: ${a} + ${b} returned ${result}, expected ${expected}"
+                            error "❌ ERROR: ${arg1} + ${arg2} returned ${result}, expected ${expected}"
                         }
                     }
                 }
@@ -96,10 +80,9 @@ pipeline {
         stage('Deploy') {
             steps {
                 script {
-                    // NOTE: docker login must already be configured on Jenkins machine
                     bat "docker login"
-                    bat "docker tag %IMAGE_NAME% %DOCKERHUB_REPO%"
-                    bat "docker push %DOCKERHUB_REPO%"
+                    bat "docker tag %IMAGE_NAME% %DOCKERHUB_IMAGE%"
+                    bat "docker push %DOCKERHUB_IMAGE%"
                 }
             }
         }
@@ -108,9 +91,9 @@ pipeline {
     post {
         always {
             script {
-                // Always clean up container
                 bat "docker rm -f %CONTAINER_NAME% || exit 0"
             }
         }
     }
 }
+

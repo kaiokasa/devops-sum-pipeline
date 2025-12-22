@@ -2,13 +2,13 @@ pipeline {
     agent any
 
     environment {
-        // Required by PDF
+        // Required by the PDF
         CONTAINER_ID = ""
         SUM_PY_PATH = "C:\\Users\\hamoud\\Documents\\dev_fp\\sum.py"
         DIR_PATH = "C:\\Users\\hamoud\\Documents\\dev_fp"
         TEST_FILE_PATH = "C:\\Users\\hamoud\\Documents\\dev_fp\\test_variables.txt"
 
-        // Convenience variables
+        // Project variables
         IMAGE_NAME = "sum-app"
         CONTAINER_NAME = "sum-container"
         DOCKERHUB_IMAGE = "bouchentoufomar/sum-app:latest"
@@ -16,6 +16,9 @@ pipeline {
 
     stages {
 
+        /* =======================
+           STEP 2 — BUILD
+        ======================== */
         stage('Build') {
             steps {
                 dir("${DIR_PATH}") {
@@ -24,13 +27,16 @@ pipeline {
             }
         }
 
+        /* =======================
+           STEP 3 — RUN
+        ======================== */
         stage('Run') {
             steps {
                 script {
-                    // Remove any previous container with same name
+                    // Remove old container if it exists
                     bat "docker rm -f %CONTAINER_NAME% || exit 0"
 
-                    // PDF-style: capture stdout, split lines, take last line as container ID
+                    // Capture container ID (PDF-recommended way)
                     def output = bat(
                         script: "docker run -d --name %CONTAINER_NAME% %IMAGE_NAME%",
                         returnStdout: true
@@ -43,10 +49,12 @@ pipeline {
             }
         }
 
+        /* =======================
+           STEP 4 — TEST
+        ======================== */
         stage('Test') {
             steps {
                 script {
-                    // Read test cases
                     def testLines = readFile("${TEST_FILE_PATH}").trim().split("\\r?\\n")
 
                     for (def line : testLines) {
@@ -58,7 +66,7 @@ pipeline {
                         def arg2 = vars[1]
                         def expected = vars[2]
 
-                        // Execute sum.py inside container (for logs/proof)
+                        // Run sum.py inside container (for logs)
                         def output = bat(
                             script: "docker exec %CONTAINER_NAME% python /app/sum.py ${arg1} ${arg2}",
                             returnStdout: true
@@ -66,9 +74,7 @@ pipeline {
                         def outLines = output.split("\\r?\\n")
                         def result = outLines[-1].trim()
 
-                        // Compare using Decimal INSIDE Python to avoid:
-                        // - Jenkins sandbox float parsing restrictions
-                        // - floating-point precision issues
+                        // Exact comparison using Decimal (avoids float precision issues)
                         def ok = bat(
                             script: """docker exec %CONTAINER_NAME% python -c "from decimal import Decimal; \
 a=Decimal('${arg1}'); b=Decimal('${arg2}'); e=Decimal('${expected}'); \
@@ -86,21 +92,34 @@ print(a+b==e)" """,
             }
         }
 
+        /* =======================
+           STEP 6 — DEPLOY
+        ======================== */
         stage('Deploy') {
             steps {
-                script {
-                    bat "docker login"
-                    bat "docker tag %IMAGE_NAME% %DOCKERHUB_IMAGE%"
-                    bat "docker push %DOCKERHUB_IMAGE%"
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-creds',
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
+                    script {
+                        bat """
+                        echo %DOCKER_PASS% | docker login -u %DOCKER_USER% --password-stdin
+                        docker tag %IMAGE_NAME% %DOCKERHUB_IMAGE%
+                        docker push %DOCKERHUB_IMAGE%
+                        """
+                    }
                 }
             }
         }
     }
 
+    /* =======================
+       STEP 5 — POST (CLEANUP)
+    ======================== */
     post {
         always {
             script {
-                // Always remove container even if pipeline fails
                 bat "docker rm -f %CONTAINER_NAME% || exit 0"
             }
         }

@@ -10,7 +10,7 @@ pipeline {
         DIR_PATH = "${WORKSPACE}"
         TEST_FILE_PATH = "${WORKSPACE}\\test_variables.txt"
 
-        // Convenience variables
+        // Convenience
         IMAGE_NAME = "sum-app"
         CONTAINER_NAME = "sum-container"
         DOCKERHUB_REPO = "bouchentoufomar/sum-app:latest"
@@ -28,20 +28,16 @@ pipeline {
         stage('Run') {
             steps {
                 script {
-                    // Remove old container if it exists (prevents conflicts)
+                    // Remove old container if it exists
                     bat "docker rm -f %CONTAINER_NAME% || exit 0"
 
-                    // Start container in detached mode with a fixed name
+                    // Start container
                     bat "docker run -d --name %CONTAINER_NAME% %IMAGE_NAME%"
 
-                    // Store the container ID (cleanly) to satisfy the requirement
-                    def idOut = bat(
-                        script: "docker inspect -f {{.Id}} %CONTAINER_NAME%",
-                        returnStdout: true
-                    ).trim()
-
+                    // OPTIONAL: try to store container id (not required for the rest)
+                    def idOut = bat(script: "docker ps -q -f name=%CONTAINER_NAME%", returnStdout: true).trim()
                     env.CONTAINER_ID = idOut
-                    echo "Container started with ID: ${env.CONTAINER_ID}"
+                    echo "Container started (name=%CONTAINER_NAME%), ID: ${env.CONTAINER_ID}"
                 }
             }
         }
@@ -49,7 +45,6 @@ pipeline {
         stage('Test') {
             steps {
                 script {
-                    // Read all test cases (each line: a b expected_sum)
                     def lines = readFile("${TEST_FILE_PATH}").trim().split("\\r?\\n")
 
                     for (def line : lines) {
@@ -61,16 +56,23 @@ pipeline {
                         def b = parts[1]
                         def expected = parts[2] as BigDecimal
 
-                        // Execute inside container (use container NAME to avoid Windows parsing issues)
+                        // Run the script inside the container by NAME
                         def raw = bat(
                             script: "docker exec %CONTAINER_NAME% python /app/sum.py ${a} ${b}",
                             returnStdout: true
                         ).trim()
 
-                        // Get last non-empty line as result
+                        // Find last non-empty line WITHOUT reverse() (sandbox-safe)
                         def outLines = raw.split("\\r?\\n")
-                        def last = outLines.reverse().find { it.trim() != "" }.trim()
-                        def result = last as BigDecimal
+                        def lastNonEmpty = ""
+                        for (int i = 0; i < outLines.length; i++) {
+                            def t = outLines[i].trim()
+                            if (t != "") {
+                                lastNonEmpty = t
+                            }
+                        }
+
+                        def result = lastNonEmpty as BigDecimal
 
                         if (result == expected) {
                             echo "✅ SUCCESS: ${a} + ${b} = ${result} (expected ${expected})"
@@ -85,8 +87,7 @@ pipeline {
         stage('Deploy') {
             steps {
                 script {
-                    // NOTE: docker login may require credentials setup in Jenkins
-                    // If this hangs, use Jenkins credentials + password-stdin
+                    // NOTE: docker login may hang in Jenkins if not configured (see note below)
                     bat "docker login"
                     bat "docker tag %IMAGE_NAME% %DOCKERHUB_REPO%"
                     bat "docker push %DOCKERHUB_REPO%"
@@ -98,10 +99,8 @@ pipeline {
     post {
         always {
             script {
-                // Always stop/remove container
                 bat "docker rm -f %CONTAINER_NAME% || exit 0"
             }
         }
     }
 }
-

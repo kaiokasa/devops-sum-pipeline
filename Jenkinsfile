@@ -73,7 +73,8 @@ pipeline {
                         }
 
                         def result = lastNonEmpty as BigDecimal
-
+			def resultRounded = result.setScale(6, java.math.RoundingMode.HALF_UP)
+			def expectedRounded = expected.setScale(6, java.math.RoundingMode.HALF_UP)
                         if (result == expected) {
                             echo "✅ SUCCESS: ${a} + ${b} = ${result} (expected ${expected})"
                         } else {

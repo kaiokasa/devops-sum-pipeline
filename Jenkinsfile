@@ -2,13 +2,13 @@ pipeline {
     agent any
 
     environment {
-        // Required by the PDF
+        
         CONTAINER_ID = ""
         SUM_PY_PATH = "C:\\Users\\hamoud\\Documents\\dev_fp\\sum.py"
         DIR_PATH = "C:\\Users\\hamoud\\Documents\\dev_fp"
         TEST_FILE_PATH = "C:\\Users\\hamoud\\Documents\\dev_fp\\test_variables.txt"
 
-        // Project variables
+
         IMAGE_NAME = "sum-app"
         CONTAINER_NAME = "sum-container"
         DOCKERHUB_IMAGE = "bouchentoufomar/sum-app:latest"
@@ -16,9 +16,7 @@ pipeline {
 
     stages {
 
-        /* =======================
-           STEP 2 — BUILD
-        ======================== */
+      
         stage('Build') {
             steps {
                 dir("${DIR_PATH}") {
@@ -27,16 +25,14 @@ pipeline {
             }
         }
 
-        /* =======================
-           STEP 3 — RUN
-        ======================== */
+      
         stage('Run') {
             steps {
                 script {
-                    // Remove old container if it exists
+                    
                     bat "docker rm -f %CONTAINER_NAME% || exit 0"
 
-                    // Capture container ID (PDF-recommended way)
+                    
                     def output = bat(
                         script: "docker run -d --name %CONTAINER_NAME% %IMAGE_NAME%",
                         returnStdout: true
@@ -49,9 +45,7 @@ pipeline {
             }
         }
 
-        /* =======================
-           STEP 4 — TEST
-        ======================== */
+      
         stage('Test') {
             steps {
                 script {
@@ -66,7 +60,7 @@ pipeline {
                         def arg2 = vars[1]
                         def expected = vars[2]
 
-                        // Run sum.py inside container (for logs)
+                        
                         def output = bat(
                             script: "docker exec %CONTAINER_NAME% python /app/sum.py ${arg1} ${arg2}",
                             returnStdout: true
@@ -74,7 +68,7 @@ pipeline {
                         def outLines = output.split("\\r?\\n")
                         def result = outLines[-1].trim()
 
-                        // Exact comparison using Decimal (avoids float precision issues)
+                        
                         def ok = bat(
                             script: """docker exec %CONTAINER_NAME% python -c "from decimal import Decimal; \
 a=Decimal('${arg1}'); b=Decimal('${arg2}'); e=Decimal('${expected}'); \
@@ -83,18 +77,16 @@ print(a+b==e)" """,
                         ).trim()
 
                         if (ok.endsWith("True")) {
-                            echo "✅ SUCCESS: ${arg1} + ${arg2} = ${result} (expected ${expected})"
+                            echo " SUCCESS: ${arg1} + ${arg2} = ${result} (expected ${expected})"
                         } else {
-                            error "❌ ERROR: ${arg1} + ${arg2} returned ${result}, expected ${expected}"
+                            error " ERROR: ${arg1} + ${arg2} returned ${result}, expected ${expected}"
                         }
                     }
                 }
             }
         }
 
-        /* =======================
-           STEP 6 — DEPLOY
-        ======================== */
+       
         stage('Deploy') {
             steps {
                 withCredentials([usernamePassword(
@@ -114,9 +106,7 @@ print(a+b==e)" """,
         }
     }
 
-    /* =======================
-       STEP 5 — POST (CLEANUP)
-    ======================== */
+ 
     post {
         always {
             script {
